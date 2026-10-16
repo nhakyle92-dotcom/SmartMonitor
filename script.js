@@ -243,3 +243,71 @@ function connectFirebaseReadOnly() {
 }
 
 connectFirebaseReadOnly();
+
+async function enableSoilNotifications() {
+  const status = $('notification-status');
+
+  if (!status) {
+    alert('Chưa tìm thấy phần thông báo trong index.html.');
+    return;
+  }
+
+  try {
+    if (!('serviceWorker' in navigator) ||
+        !('Notification' in window)) {
+      status.textContent = 'Trình duyệt không hỗ trợ thông báo web.';
+      return;
+    }
+
+    if (!window.firebase || !firebase.messaging) {
+      status.textContent = 'Chưa tải Firebase Messaging SDK.';
+      return;
+    }
+
+    status.textContent = 'Đang xin quyền thông báo...';
+
+    const permission = await Notification.requestPermission();
+
+    if (permission !== 'granted') {
+      status.textContent = 'Bà chưa cấp quyền thông báo.';
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.register(
+      './firebase-messaging-sw.js'
+    );
+
+    await navigator.serviceWorker.ready;
+
+    const messaging = firebase.messaging();
+
+    const token = await messaging.getToken({
+      vapidKey: 'BLCTyeXySEoPFFMLmndskD3Ft9CDitp9E24OBOQient4UUpBihOGe7J1puuPwSy7-Zw01ycVd7m4cFw2bHAgg0Y',
+      serviceWorkerRegistration: registration
+    });
+
+    if (!token) {
+      status.textContent = 'Chưa lấy được mã đăng ký thông báo.';
+      return;
+    }
+
+    console.log('FCM registration token:', token);
+
+    status.textContent =
+      'Đã đăng ký trình duyệt nhận thông báo!';
+
+  } catch (error) {
+    console.error('Lỗi đăng ký thông báo:', error);
+    status.textContent =
+      'Đăng ký thất bại. Mở Console (F12) để kiểm tra lỗi.';
+  }
+}
+
+const notificationButton = $('enable-notifications');
+
+if (notificationButton) {
+  notificationButton.addEventListener(
+    'click',
+    enableSoilNotifications
+  );
+}
