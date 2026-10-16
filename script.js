@@ -244,70 +244,157 @@ function connectFirebaseReadOnly() {
 
 connectFirebaseReadOnly();
 
+// ================================
+// Firebase Cloud Messaging (FCM)
+// Đăng ký trình duyệt nhận thông báo và hiển thị token để kiểm tra.
+// Lưu ý: index.html cần tải firebase-messaging-compat.js trước script.js.
+// ================================
+const FCM_VAPID_PUBLIC_KEY = 'BLCTyeXySEoPFFMLmndskD3Ft9CDitp9E24OBOQient4UUpBihOGe7J1puuPwSy7-Zw01ycVd7m4cFw2bHAgg0Y';
+
+function getNotificationStatusElement() {
+  let status = $('notification-status');
+  if (status) return status;
+
+  // Nếu HTML chưa có vùng trạng thái, tự tạo một khu vực nhỏ để báo kết quả.
+  const button = $('enable-notifications');
+  if (!button) return null;
+  status = document.createElement('p');
+  status.id = 'notification-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.style.marginTop = '12px';
+  button.insertAdjacentElement('afterend', status);
+  return status;
+}
+
 async function enableSoilNotifications() {
-  const status = $('notification-status');
+  const status = getNotificationStatusElement();
 
   if (!status) {
-    alert('Chưa tìm thấy phần thông báo trong index.html.');
+    alert('Chưa tìm thấy nút bật thông báo. Hãy kiểm tra index.html có id="enable-notifications".');
     return;
   }
 
   try {
-    if (!('serviceWorker' in navigator) ||
-        !('Notification' in window)) {
-      status.textContent = 'Trình duyệt không hỗ trợ thông báo web.';
+    if (!('serviceWorker' in navigator) || !('Notification' in window)) {
+      status.textContent = 'Trình duyệt này không hỗ trợ thông báo web.';
       return;
     }
 
-    if (!window.firebase || !firebase.messaging) {
-      status.textContent = 'Chưa tải Firebase Messaging SDK.';
+    if (!window.firebase || typeof firebase.messaging !== 'function') {
+      status.textContent = 'Thiếu Firebase Messaging SDK. Hãy thêm firebase-messaging-compat.js vào index.html trước script.js.';
       return;
     }
 
-    status.textContent = 'Đang xin quyền thông báo...';
+    // Firebase Database phía trên thường đã khởi tạo app; chỉ khởi tạo nếu chưa có.
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
 
+    if (!window.isSecureContext) {
+      status.textContent = 'Thông báo cần HTTPS. Hãy mở website qua GitHub Pages hoặc localhost.';
+      return;
+    }
+
+    status.textContent = 'Đang xin quyền thông báo…';
     const permission = await Notification.requestPermission();
-
     if (permission !== 'granted') {
-      status.textContent = 'Bà chưa cấp quyền thông báo.';
+      status.textContent = permission === 'denied'
+        ? 'Quyền thông báo đang bị chặn trong cài đặt trình duyệt.'
+        : 'Bà chưa cấp quyền thông báo.';
       return;
     }
 
-    const registration = await navigator.serviceWorker.register(
-      './firebase-messaging-sw.js'
-    );
-
+    const registration = await navigator.serviceWorker.register('./firebase-messaging-sw.js');
     await navigator.serviceWorker.ready;
 
     const messaging = firebase.messaging();
-
     const token = await messaging.getToken({
-      vapidKey: 'BLCTyeXySEoPFFMLmndskD3Ft9CDitp9E24OBOQient4UUpBihOGe7J1puuPwSy7-Zw01ycVd7m4cFw2bHAgg0Y',
+      vapidKey: FCM_VAPID_PUBLIC_KEY,
       serviceWorkerRegistration: registration
     });
 
     if (!token) {
-      status.textContent = 'Chưa lấy được mã đăng ký thông báo.';
+      status.textContent = 'Chưa lấy được FCM token. Kiểm tra service worker, VAPID key và cài đặt Firebase.';
       return;
     }
 
-    console.log('FCM registration token:', token);
+    let tokenBox = $('fcm-token-box');
+    if (!tokenBox) {
+      const wrapper = document.createElement('div');
+      wrapper.id = 'fcm-token-wrapper';
+      wrapper.style.marginTop = '12px';
+      wrapper.style.width = '100%';
 
-    status.textContent =
-      'Đã đăng ký trình duyệt nhận thông báo!';
+      const label = document.createElement('label');
+      label.htmlFor = 'fcm-token-box';
+      label.textContent = 'FCM token của thiết bị này (không đăng công khai):';
+      label.style.display = 'block';
+      label.style.marginBottom = '6px';
+      label.style.fontWeight = '600';
 
+      tokenBox = document.createElement('textarea');
+      tokenBox.id = 'fcm-token-box';
+      tokenBox.readOnly = true;
+      tokenBox.rows = 5;
+      tokenBox.setAttribute('aria-label', 'FCM token');
+      tokenBox.style.width = '100%';
+      tokenBox.style.boxSizing = 'border-box';
+      tokenBox.style.padding = '10px';
+      tokenBox.style.overflowWrap = 'anywhere';
+
+      const copyButton = document.createElement('button');
+      copyButton.type = 'button';
+      copyButton.id = 'copy-fcm-token';
+      copyButton.textContent = 'Sao chép FCM token';
+      copyButton.style.marginTop = '8px';
+      copyButton.addEventListener('click', async () => {
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(tokenBox.value);
+            status.textContent = 'Đã sao chép token. Hãy dán token vào Firebase Console để gửi thông báo thử.';
+          } else {
+            tokenBox.focus();
+            tokenBox.select();
+            const copied = document.execCommand('copy');
+            status.textContent = copied
+              ? 'Đã sao chép token.'
+              : 'Hãy nhấn giữ token rồi chọn Sao chép.';
+          }
+        } catch (error) {
+          tokenBox.focus();
+          tokenBox.select();
+          status.textContent = 'Hãy nhấn giữ token rồi chọn Sao chép.';
+        }
+      });
+
+      wrapper.appendChild(label);
+      wrapper.appendChild(tokenBox);
+      wrapper.appendChild(copyButton);
+      status.insertAdjacentElement('afterend', wrapper);
+    }
+
+    tokenBox.value = token;
+    status.textContent = 'Đăng ký thông báo thành công! Sao chép token để gửi thông báo thử từ Firebase Console.';
+    console.log('FCM registration token (không chia sẻ công khai):', token);
   } catch (error) {
     console.error('Lỗi đăng ký thông báo:', error);
-    status.textContent =
-      'Đăng ký thất bại. Mở Console (F12) để kiểm tra lỗi.';
+    let message = 'Đăng ký thông báo thất bại. Mở Console (F12) để xem lỗi.';
+    if (error && error.code === 'messaging/permission-blocked') {
+      message = 'Quyền thông báo đang bị chặn trong cài đặt trình duyệt.';
+    } else if (error && error.code === 'messaging/unsupported-browser') {
+      message = 'Trình duyệt hoặc chế độ mở website chưa hỗ trợ Firebase Web Push.';
+    } else if (error && error.code === 'messaging/failed-service-worker-registration') {
+      message = 'Không đăng ký được service worker. Kiểm tra file firebase-messaging-sw.js ở thư mục gốc.';
+    } else if (error && error.code === 'messaging/invalid-vapid-key') {
+      message = 'VAPID key không hợp lệ. Hãy kiểm tra lại Firebase Console.';
+    }
+    const currentStatus = getNotificationStatusElement();
+    if (currentStatus) currentStatus.textContent = message;
   }
 }
 
 const notificationButton = $('enable-notifications');
-
 if (notificationButton) {
-  notificationButton.addEventListener(
-    'click',
-    enableSoilNotifications
-  );
+  notificationButton.addEventListener('click', enableSoilNotifications);
 }
