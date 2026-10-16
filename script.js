@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 let readings = [];
 let abnormalEvents = [];
 let currentPeriod = 'day';
+let firebaseConnectionState = 'Đang khởi tạo Firebase…';
 
 function buildSampleEvents(rows) {
   const events = [];
@@ -51,6 +52,12 @@ function updateOverview() {
   $('sidebar-alert-count').textContent = recentEvents.length;
   $('abnormal-total').textContent = abnormalEvents.length;
   $('current-date').textContent = new Intl.DateTimeFormat('vi-VN', { weekday:'long', day:'2-digit', month:'long', year:'numeric' }).format(new Date());
+  const chip = document.querySelector('.demo-chip');
+  if (chip) chip.innerHTML = `<span class="pulse-dot"></span> ${readings.length ? 'Đã nhận dữ liệu' : firebaseConnectionState}`;
+  const deviceStatus = $('device-status');
+  if (deviceStatus) deviceStatus.textContent = readings.length ? 'Đã nhận dữ liệu từ Firebase' : firebaseConnectionState;
+  const pill = document.querySelector('.demo-pill');
+  if (pill) pill.innerHTML = `<span class="pulse-dot"></span> ${readings.length ? 'ĐÃ CÓ DỮ LIỆU' : 'ĐANG CHỜ DỮ LIỆU'}`;
 }
 function drawChart(data) {
   const canvas = $('moisture-chart');
@@ -151,3 +158,88 @@ document.querySelectorAll('.toggle-btn').forEach(button=>button.addEventListener
 $('export-history').addEventListener('click',exportHistoryCSV);
 window.addEventListener('resize',()=>renderPeriod(currentPeriod));
 updateOverview();renderPeriod('day');renderHistoryTable();renderAlerts();
+
+
+// Firebase Realtime Database: website chỉ ĐỌC dữ liệu.
+// ESP32 sẽ được cấu hình quyền ghi riêng ở bước tiếp theo.
+const firebaseConfig = {
+  apiKey: "AIzaSyC_nR9b_Yc1V_kl74DNs1xHgZ3SYxKZJQk",
+  authDomain: "smartmonitor-37eb1.firebaseapp.com",
+  databaseURL: "https://smartmonitor-37eb1-default-rtdb.firebaseio.com",
+  projectId: "smartmonitor-37eb1",
+  storageBucket: "smartmonitor-37eb1.firebasestorage.app",
+  messagingSenderId: "834907305033",
+  appId: "1:834907305033:web:4df2971addd9cb1c453b98",
+  measurementId: "G-B2NT2XX8NK"
+};
+
+function showFirebaseStatus(message) {
+  firebaseConnectionState = message;
+  const deviceStatus = $('device-status');
+  if (deviceStatus && !readings.length) deviceStatus.textContent = message;
+  const chip = document.querySelector('.demo-chip');
+  if (chip && !readings.length) chip.innerHTML = `<span class="pulse-dot"></span> ${message}`;
+}
+
+function rebuildAbnormalEvents(rows) {
+  const events = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.moisture < THRESHOLD_LOW) {
+      events.push({timestamp: row.timestamp, type:'low', title:'Độ ẩm đất thấp', value:`${row.moisture}%`, threshold:`Dưới ${THRESHOLD_LOW}%`, note:'Độ ẩm thấp hơn ngưỡng tham chiếu; cần kiểm tra đất và tưới nước nếu cần.'});
+    }
+    if (row.moisture > THRESHOLD_HIGH) {
+      events.push({timestamp: row.timestamp, type:'high', title:'Độ ẩm đất cao', value:`${row.moisture}%`, threshold:`Trên ${THRESHOLD_HIGH}%`, note:'Độ ẩm vượt ngưỡng tham chiếu; nên kiểm tra tình trạng thoát nước.'});
+    }
+    if (i > 0 && Math.abs(row.moisture - rows[i-1].moisture) >= 15) {
+      events.push({timestamp: row.timestamp, type:'change', title:'Độ ẩm thay đổi đột ngột', value:`${rows[i-1].moisture}% → ${row.moisture}%`, threshold:'Thay đổi ≥ 15 điểm %', note:'Kiểm tra điều kiện đất và vị trí tiếp xúc của cảm biến.'});
+    }
+  }
+  return events.sort((a,b) => b.timestamp - a.timestamp);
+}
+
+function connectFirebaseReadOnly() {
+  if (!window.firebase) {
+    showFirebaseStatus('Không tải được Firebase SDK');
+    return;
+  }
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const database = firebase.database();
+    showFirebaseStatus('Đang đăng nhập Firebase…');
+
+    auth.signInAnonymously().then(() => {
+      showFirebaseStatus('Đã kết nối Firebase · Chờ dữ liệu');
+      // ESP32 sẽ gửi bản ghi vào /readings/{id} với timestamp mili-giây, moisture và adc.
+      database.ref('readings').on('value', (snapshot) => {
+        const value = snapshot.val() || {};
+        const rows = Object.keys(value).map((key) => {
+          const item = value[key] || {};
+          let timestamp = Number(item.timestamp);
+          if (timestamp > 0 && timestamp < 1000000000000) timestamp *= 1000; // chấp nhận Unix seconds
+          return { timestamp, moisture: Number(item.moisture), adc: Number(item.adc), id: key };
+        }).filter(row => Number.isFinite(row.timestamp) && row.timestamp > 0 && Number.isFinite(row.moisture) && row.moisture >= 0 && row.moisture <= 100 && Number.isFinite(row.adc) && row.adc >= 0 && row.adc <= 4095)
+          .sort((a,b) => a.timestamp - b.timestamp);
+        readings = rows;
+        abnormalEvents = rebuildAbnormalEvents(readings);
+        showFirebaseStatus(readings.length ? 'Đã nhận dữ liệu từ Firebase' : 'Đã kết nối Firebase · Chờ dữ liệu');
+        updateOverview();
+        renderPeriod(currentPeriod);
+        renderHistoryTable();
+        renderAlerts();
+      }, (error) => {
+        console.error('Firebase Database:', error);
+        showFirebaseStatus('Lỗi quyền truy cập database');
+      });
+    }).catch((error) => {
+      console.error('Firebase Authentication:', error);
+      showFirebaseStatus('Chưa bật đăng nhập ẩn danh');
+    });
+  } catch (error) {
+    console.error('Firebase initialization:', error);
+    showFirebaseStatus('Không khởi tạo được Firebase');
+  }
+}
+
+connectFirebaseReadOnly();
