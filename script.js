@@ -301,7 +301,7 @@ async function enableSoilNotifications() {
     if (permission !== 'granted') {
       status.textContent = permission === 'denied'
         ? 'Quyền thông báo đang bị chặn trong cài đặt trình duyệt.'
-        : 'Bà chưa cấp quyền thông báo.';
+        : 'Bạn chưa cấp quyền thông báo.';
       return;
     }
 
@@ -374,9 +374,24 @@ async function enableSoilNotifications() {
       status.insertAdjacentElement('afterend', wrapper);
     }
 
-    tokenBox.value = token;
-    status.textContent = 'Đăng ký thông báo thành công! Sao chép token để gửi thông báo thử từ Firebase Console.';
-    console.log('FCM registration token (không chia sẻ công khai):', token);
+    
+tokenBox.value = token;
+
+// Lưu FCM token vào Firebase Realtime Database
+const database = firebase.database();
+const tokenId = token.substring(0, 20).replace(/[.#$[\]/]/g, '_');
+
+await database.ref('fcmTokens/' + tokenId).set({
+  token: token,
+  createdAt: Date.now(),
+  platform: 'web'
+});
+
+status.textContent =
+  'Đăng ký thông báo thành công! FCM token đã được lưu vào Firebase.';
+
+console.log('Đã lưu FCM token vào Firebase.');
+
   } catch (error) {
     console.error('Lỗi đăng ký thông báo:', error);
     let message = 'Đăng ký thông báo thất bại. Mở Console (F12) để xem lỗi.';
