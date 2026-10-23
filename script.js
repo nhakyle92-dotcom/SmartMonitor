@@ -1,7 +1,7 @@
 // Smart Soil Monitor — bản sạch, không chứa dữ liệu mẫu.
 // Khi tích hợp ESP32/Firebase, chuyển dữ liệu thật vào processIncomingReading().
-const THRESHOLD_LOW = 30;
-const THRESHOLD_HIGH = 70;
+const THRESHOLD_LOW = 65;
+const THRESHOLD_HIGH = 75;
 const $ = (id) => document.getElementById(id);
 let readings = [];
 let abnormalEvents = [];
